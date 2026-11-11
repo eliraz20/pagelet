@@ -1,7 +1,7 @@
 const KEY = 'pagelet.project.v1';
 const LARGE = '@indexed';
 let connection: Promise<IDBDatabase> | undefined;
-function database() {
+export function database() {
     if (!connection) connection = new Promise<IDBDatabase>((resolve,reject) => {
         const req = indexedDB.open('pagelet-media-drafts',1);
         req.onupgradeneeded = () => req.result.createObjectStore('drafts');

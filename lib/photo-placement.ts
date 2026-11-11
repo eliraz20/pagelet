@@ -47,6 +47,26 @@ export function clearPhoto(section: Section, role: PhotoRole): Section {
     return { ...section, [role === 'front' ? 'frontPhoto' : 'buttonPhoto']: null };
 }
 
+/** Swap only the source in an occupied slot. Independent phone crops live on the section. */
+export function replaceMedia(project: Project, { id, role }: Target, src: string): Project {
+    const section = project.sections.find(s => s.id === id);
+    if (!section || !mediaSource(src)) return project;
+    const previous = currentPhoto(section, role);
+    if (!previous || previous.src === src) return project;
+    let changed: Section;
+    switch (role) {
+        case 'hero': changed = { ...section, image: src }; break;
+        case 'background': {
+            const bg = section.background;
+            changed = { ...section, background: { ...bg, image: src, fit: isVideo(src) && bg.fit === 'tile' ? 'cover' : bg.fit } };
+            break;
+        }
+        case 'front': changed = { ...section, frontPhoto: { ...previous, src } }; break;
+        case 'button': changed = { ...section, buttonPhoto: { ...previous, src } }; break;
+    }
+    return { ...project, sections: project.sections.map(s => s === section ? changed : s) };
+}
+
 export function placePhoto(project: Project, draft: PhotoDraft): Project {
     const destination = project.sections.find(s => s.id === draft.id);
     const photo = readPhoto(draft);
