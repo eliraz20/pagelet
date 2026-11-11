@@ -1,3 +1,5 @@
+import { videoTag } from './media-render.ts';
+import { isVideo, mediaSource } from './photo-placement.ts';
 import type { Section } from './page-model';
 import { normalizeBackground, BACKGROUND_PRESETS } from './backgrounds.ts';
 import { normalizeContact, contactHref, SOCIAL_FIELDS } from './socials.ts';
@@ -32,9 +34,10 @@ export function decorateSection(section: Section, html: string, safeImage: (valu
         if (url)
             image = `url("${url}")`;
     }
-    if (image) {
+    const clip = bg.kind === 'upload' && isVideo(bg.image) && mediaSource(bg.image);
+    if (image || clip) {
         const size = bg.fit === 'tile' ? `${bg.tileSize}px ${bg.kind === 'upload' ? 'auto' : bg.tileSize + 'px'}` : bg.fit;
-        const layer = `<div class="section-backdrop" aria-hidden="true"><div class="section-background-image" style="background-image:${esc(image)};background-size:${size};background-position:${bg.position};background-repeat:${bg.fit === 'tile' ? 'repeat' : 'no-repeat'};opacity:${bg.opacity / 100};filter:blur(${bg.blur}px)"></div><div class="section-background-tint" style="background:${bg.overlayColor};opacity:${bg.overlayOpacity / 100}"></div></div>`;
+        const layer = `<div class="section-backdrop" aria-hidden="true"><div class="section-background-image" style="background-image:${esc(image)};background-size:${size};background-position:${bg.position};background-repeat:${bg.fit === 'tile' ? 'repeat' : 'no-repeat'};opacity:${bg.opacity / 100};filter:blur(${bg.blur}px)">${clip ? videoTag(bg.image, '', true).replace('<video ', '<video style="object-fit:' + (bg.fit === 'contain' ? 'contain' : 'cover') + ';object-position:' + bg.position + '" ') : ''}</div><div class="section-background-tint" style="background:${bg.overlayColor};opacity:${bg.overlayOpacity / 100}"></div></div>`;
         html = html.replace('class="', 'class="has-background ').replace(/<section[^>]*>/, match => match + layer);
     }
     const reveal = section.reveal;

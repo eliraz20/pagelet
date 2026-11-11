@@ -1,3 +1,4 @@
+import { isVideo, mediaSource } from './photo-placement.ts';
 export type Background = {
     kind: 'none' | 'preset' | 'upload';
     preset: string;
@@ -26,5 +27,5 @@ export function normalizeBackground(input: unknown): Background {
     if (!input || typeof input !== 'object')
         return base;
     const value = input as Record<string, unknown>;
-    return { ...base, kind: ['none', 'preset', 'upload'].includes(String(value.kind)) ? value.kind as Background['kind'] : 'none', preset: BACKGROUND_PRESETS.some(p => p.id === value.preset) ? String(value.preset) : 'dots', image: typeof value.image === 'string' ? value.image.slice(0, 2200000) : '', fit: ['cover', 'contain', 'tile'].includes(String(value.fit)) ? value.fit as Background['fit'] : 'cover', position: ['center', 'top', 'bottom', 'left', 'right', 'top left', 'top right', 'bottom left', 'bottom right'].includes(String(value.position)) ? String(value.position) : 'center', tileSize: clamp(value.tileSize, 32, 800, 240), opacity: clamp(value.opacity, 0, 100, 35), blur: clamp(value.blur, 0, 20, 0), overlayColor: typeof value.overlayColor === 'string' && /^#[a-f\d]{6}$/i.test(value.overlayColor) ? value.overlayColor : '#ffffff', overlayOpacity: clamp(value.overlayOpacity, 0, 100, 0) };
+    return { ...base, kind: ['none', 'preset', 'upload'].includes(String(value.kind)) ? value.kind as Background['kind'] : 'none', preset: BACKGROUND_PRESETS.some(p => p.id === value.preset) ? String(value.preset) : 'dots', image: typeof value.image === 'string' ? isVideo(value.image) ? mediaSource(value.image) : value.image.slice(0, 2200000) : '', fit: ['cover', 'contain', 'tile'].includes(String(value.fit)) ? value.fit as Background['fit'] : 'cover', position: /^(?:100|[1-9]?\d)(?:\.\d{1,2})?% (?:100|[1-9]?\d)(?:\.\d{1,2})?%$/.test(String(value.position)) || ['center', 'top', 'bottom', 'left', 'right', 'top left', 'top right', 'bottom left', 'bottom right'].includes(String(value.position)) ? String(value.position) : 'center', tileSize: clamp(value.tileSize, 32, 800, 240), opacity: clamp(value.opacity, 0, 100, 35), blur: clamp(value.blur, 0, 20, 0), overlayColor: typeof value.overlayColor === 'string' && /^#[a-f\d]{6}$/i.test(value.overlayColor) ? value.overlayColor : '#ffffff', overlayOpacity: clamp(value.overlayOpacity, 0, 100, 0) };
 }

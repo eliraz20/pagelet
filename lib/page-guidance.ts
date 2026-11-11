@@ -94,6 +94,8 @@ export function checkPage(project: Project): PageIssue[] {
         if (!s.title.trim()) add('heading', 'Add a heading so this section has a clear purpose.', s);
         const copy = [s.title, s.description, ...s.items.flatMap(i => [i.title, i.text])].join(' ');
         if (/add a real|replace (this|these)|describe (who|how|the)|your customer|add (the|your) (time|event|main)|your (service|price|brand)|sample (offer|illustration)|something worth sharing|add a little detail|your next chapter starts here/i.test(copy)) add('sample', 'Review the starter text and replace any placeholders.', s);
+        if (s.frontPhoto && !s.frontPhoto.alt.trim()) add('foreground-label', 'Add a description or label for your foreground media.', s);
+        if (s.image.startsWith('data:video/') && !s.items[0]?.text.trim()) add('video-label', 'Give the hero video a label.', s);
         if (safeImage(s.image) && !s.items[0]?.text.trim()) add('image-alt', 'Describe the hero image for people using screen readers.', s);
         if (s.type === 'gallery' && s.gallery.some(i => !i.alt.trim())) add('gallery-alt', 'Add an image description to each gallery image.', s);
         if (s.type === 'gallery' && s.gallery.some(i => i.preset)) add('gallery-sample', 'Replace the illustrative gallery studies with your own work.', s);

@@ -9,7 +9,10 @@ A focused landing page creator: choose a complete layout, make the story yours, 
 ## What you can do
 
 - Start with a goal: inquiries, product sales, events, or a portfolio; enter your brand, offer, and main destination to get a suggested section order
-- Keep the original service, product, and launch visual starters as an alternative
+- Choose from six visual starters, including a product waitlist, photo mini-session booking page, and digital field guide with an interactive sample. Supply your own signup, booking, or checkout URL.
+- Under **Section media**, choose **Place a photo or video**. Drag across sections, choose foreground or background, replace hero artwork, or drop onto a section CTA to use the upload as its skin. Use **Apply placement** to commit. Each section has one slot per supported role.
+- Toggle **Snap to grid** for 10% steps, or hold Alt/Option while dragging for fine adjustment. The section picker, position sliders, and phone preview also work without dragging.
+- Upload PNG, JPEG, or WebP images up to 1.5 MB and MP4 or WebM clips up to 12 MiB each. H.264 MP4 is the preferred format for Safari. Hero and foreground videos have playback controls. Background and button videos loop silently and respect reduced-motion settings. Media is embedded in HTML, website-folder exports, and project backups. Larger browser drafts use IndexedDB.
 - Click headlines, descriptions, labels, and button text to edit directly; click outside the text or press Ctrl/⌘ Enter to save (Escape cancels)
 - Choose Classic, Centered, or Compact section layouts
 - Adjust mobile section visibility, heading sizes, and hero image crops independently of desktop
@@ -159,7 +162,7 @@ Page length, section order, and CTA wording should be tested with the actual aud
 - Undo/redo keeps up to 60 document states in memory; history resets on reload
 - Up to 30 sections and 12 items per section
 - Up to eight tabs per tabbed section and 12 images per gallery
-- PNG, JPEG, and WebP uploads up to 1.5 MB per image; project imports up to 128 MB to support embedded foreground and background images
+- Each raster image may use up to 1.5 MB and each MP4 or WebM video up to 12 MiB. Editable project imports accept up to 128 MB.
 - Browser storage quotas vary. If saving fails, Pagelet prompts you to download a backup.
 - Preview content runs in sandboxed iframes. External links open a separate tab in full preview. Social website links also open a separate tab in exports; other exported links retain normal native behavior.
 - Text and metadata are escaped; imported themes and section types are validated; link and image protocols are restricted.
@@ -172,6 +175,6 @@ Multiple saved projects, more section-specific layouts, hosted publishing, and o
 
 MIT. See [LICENSE](LICENSE).
 
-## Validation for version 1.3
+## Validation
 
-TypeScript checking, the production static build, and 32 automated tests pass. These cover goal starters, draft migration, bounded mobile settings, link checks, escaping, conditional export scripts, and ZIP structure. ZIP contents were also checked with an independent ZIP reader. Browser interaction and visual QA for the new controls could not be completed in this session because preview access was blocked.
+Run `npm run typecheck`, `npm test`, and `npm run build:offline` to check the editor and build its portable HTML file. Tests cover templates, section placement, grid snapping, backup migration, embedded media, and website-folder exports.

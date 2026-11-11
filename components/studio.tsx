@@ -11,15 +11,20 @@ import { ArrowUpRight, ArrowLeft, ArrowUp, ArrowDown, Check, ChevronDown, Chevro
 import { createProject, makeSection, moveSection, parseProject, uid, contrast, PALETTES, SECTION_META } from '@/lib/page-model';
 import type { Project, Section, SectionType, Theme } from '@/lib/page-model';
 import { renderPage, safeHref, safeImage } from '@/lib/render-page';
-const STORAGE = 'pagelet.project.v1';
+import { MediaPlacement, roles } from './media-placement';
+import { STARTERS } from '@/lib/starters';
+import { currentPhoto, clearPhoto, placePhoto, isVideo, mediaSource } from '@/lib/photo-placement';
+import type { PhotoDraft, PhotoRole, Target } from '@/lib/photo-placement';
+import { readMedia, mediaAccept } from '@/lib/read-media';
+import { loadDraft, saveDraft } from '@/lib/draft-storage';
 type Tab = 'sections' | 'design' | 'settings';
-type Modal = 'templates' | 'add' | 'export' | 'preview' | 'help' | null;
+type Modal = 'placement' | 'templates' | 'add' | 'export' | 'preview' | 'help' | null;
 type History = {
     past: Project[];
     current: Project;
     future: Project[];
 };
-const TEMPLATES = [{ id: 'studio' as const, name: 'The thoughtful studio', tag: 'Services & creatives', color: 'butter', description: 'Warm, editorial, and a little unexpected.' }, { id: 'product' as const, name: 'The next big thing', tag: 'Products & startups', color: 'lilac', description: 'A clear story for a product worth exploring.' }, { id: 'launch' as const, name: 'Something different', tag: 'Launches & ideas', color: 'ink', description: 'A bold first impression for what comes next.' }];
+const TEMPLATES = [{ id: 'studio' as const, name: 'The thoughtful studio', tag: 'Services & creatives', color: 'butter', description: 'Warm, editorial, and a little unexpected.' }, { id: 'product' as const, name: 'The next big thing', tag: 'Products & startups', color: 'lilac', description: 'A clear story for a product worth exploring.' }, { id: 'launch' as const, name: 'Something different', tag: 'Launches & ideas', color: 'ink', description: 'A bold first impression for what comes next.' }, ...STARTERS];
 function download(content: string | Uint8Array<ArrayBuffer>, name: string, type: string) { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z\d]+/g, '-').replace(/^-|-$/g, '').slice(0, 70) || 'my-page';
 function Field({ label, value, onChange, multiline = false, hint, placeholder, maxLength = 4000 }: {
@@ -37,6 +42,9 @@ function TemplateThumb({ tone = 'butter' }: {
 export default function Studio() {
     const [history, setHistory] = useState<History>(() => ({ past: [], current: createProject(), future: [] }));
     const project = history.current;
+    const [placement,setPlacement] = useState<PhotoDraft | null>(null);
+    const [starterLink,setStarterLink] = useState('');
+    const uploadTarget = useRef<Target | null>(null);
     const [frameWidth, setFrameWidth] = useState(1060);
     const [ready, setReady] = useState(false), [tab, setTab] = useState<Tab>('sections'), [selectedId, setSelectedId] = useState(''), [device, setDevice] = useState<'desktop' | 'mobile'>('desktop'), [modal, setModal] = useState<Modal>(null), [toast, setToast] = useState(''), [saveState, setSaveState] = useState<'saving' | 'saved' | 'unavailable'>('saved'), [panelOpen, setPanelOpen] = useState(true), [dragged, setDragged] = useState<string | null>(null), [exported, setExported] = useState(false);
     const viewportRef = useRef<HTMLDivElement>(null), iframe = useRef<HTMLIFrameElement>(null), propertiesRef = useRef<HTMLElement>(null), importInput = useRef<HTMLInputElement>(null), imageInput = useRef<HTMLInputElement>(null), modalRef = useRef<HTMLDialogElement>(null), scrollY = useRef(0), editGroup = useRef({ key: '', time: 0 }), modalTrigger = useRef<HTMLElement | null>(null), lastModal = useRef<Modal>(null);
@@ -76,8 +84,11 @@ export default function Studio() {
         setTimeout(() => propertiesRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
     };
     useEffect(() => {
+        let active = true;
+        async function restore() {
         try {
-            const stored = localStorage.getItem(STORAGE);
+            const stored = await loadDraft();
+            if (!active) return;
             if (stored) {
                 const saved = parseProject(JSON.parse(stored));
                 setHistory({ past: [], current: saved, future: [] });
@@ -91,9 +102,13 @@ export default function Studio() {
         catch {
             notify('Your saved draft could not be opened. A fresh page is ready; import a project backup to restore it.');
         }
+        if (!active) return;
         if (window.matchMedia('(max-width:650px)').matches)
             setPanelOpen(false);
         setReady(true);
+        }
+        void restore();
+        return () => {active=false;};
         // The browser draft is intentionally loaded once after hydration.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -101,9 +116,9 @@ export default function Studio() {
         if (!ready)
             return;
         setSaveState('saving');
-        const timer = setTimeout(() => {
+        const timer = setTimeout(async () => {
             try {
-                localStorage.setItem(STORAGE, JSON.stringify(project));
+                await saveDraft(JSON.stringify(project));
                 setSaveState('saved');
             }
             catch {
@@ -131,7 +146,7 @@ export default function Studio() {
             }
             if (data?.type === 'pagelet:image' && project.sections.some(s => s.id === data.id && s.type === 'hero')) {
                 selectSection(data.id);
-                imageInput.current?.click();
+                pickUpload(data.id,'hero');
             }
             if (data?.type === 'pagelet:scroll' && typeof data.y === 'number' && Number.isFinite(data.y))
                 scrollY.current = Math.max(0, data.y);
@@ -169,6 +184,7 @@ export default function Studio() {
             }
             if (!input && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
+                if (modal === 'placement') return;
                 if (e.shiftKey)
                     redo();
                 else
@@ -177,7 +193,7 @@ export default function Studio() {
         };
         window.addEventListener('keydown', handle);
         return () => window.removeEventListener('keydown', handle);
-    }, [project, undo, redo, notify]);
+    }, [project, undo, redo, notify, modal]);
     async function uploadGallery(files: File[], replaceId?: string) {
         if (!selected)
             return;
@@ -235,7 +251,14 @@ export default function Studio() {
         if (issue.sectionId) { setDevice('desktop'); selectSection(issue.sectionId, true); }
         else { setTab(issue.panel); setPanelOpen(true); }
     }
-    function chooseTemplate(id: Project['template']) { const fresh = createProject(id); commit(fresh); setSelectedId(fresh.sections[0]?.id || ''); scrollY.current = 0; setModal(null); notify('New starting design applied. Your previous page is one undo away.'); }
+    function chooseTemplate(id: Project['template']) { const fresh = createProject(id);
+        if (starterLink.trim()) {
+            const url = safeHref(starterLink);
+            if (url === '#' || !/^https?:/.test(url)) {notify('Enter a complete booking, signup, or checkout URL.');return;}
+            fresh.navHref=url;
+            fresh.sections=fresh.sections.map(s=>s.buttonLabel && (s.buttonHref==='#contact' || s.type==='cta') ? {...s,buttonHref:url} : s);
+        }
+        commit(fresh); setSelectedId(fresh.sections[0]?.id || ''); scrollY.current = 0; setModal(null); notify('New starting design applied. Your previous page is one undo away.'); }
     async function importProject(file?: File) {
         if (!file)
             return;
@@ -254,18 +277,20 @@ export default function Studio() {
         if (importInput.current)
             importInput.current.value = '';
     }
-    async function uploadImage(file?: File, target: 'hero' | 'background' = 'hero') {
-        if (!file || !selected)
-            return;
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 1500 * 1024) {
-            notify('Choose a PNG, JPEG, or WebP image up to 1.5 MB.');
-            return;
-        }
-        const id = selected.id;
-        const reader = new FileReader();
-        reader.onload = () => { commit(p => ({ ...p, sections: p.sections.map(s => s.id !== id ? s : target === 'hero' ? { ...s, image: String(reader.result) } : { ...s, background: { ...s.background, kind: 'upload', image: String(reader.result) } }) })); notify('Image added. It will be embedded in your exported page.'); };
-        reader.onerror = () => notify('That image could not be read. Please try another.');
-        reader.readAsDataURL(file);
+    function pickUpload(id:string, role:PhotoRole) {
+        uploadTarget.current={id,role}; imageInput.current?.click();
+    }
+    function stage(draft:PhotoDraft) {
+        const target=project.sections.find(s=>s.id===draft.id && !s.hidden);
+        if(!target){notify('Show the section before placing media in it.');return;}
+        setPlacement(draft);openModal('placement');
+    }
+    async function uploadImage(file?: File, target: PhotoRole = 'hero', id = selected?.id) {
+        if (!file || !id) return;
+        try {
+            const src = await readMedia(file);
+            stage({id, role:target, src, alt:'', x:50, y:50});
+        } catch(error) {notify(error instanceof Error ? error.message : 'This file could not be opened.');}
         if (imageInput.current)
             imageInput.current.value = '';
     }
@@ -294,11 +319,14 @@ export default function Studio() {
         {tab === 'sections' && <><div className="layout-prompt"><div className="layout-prompt-icon"><LayoutTemplate size={19}/></div><div><strong>A page with a purpose</strong><p>Start with what your page should do.</p></div><button className="icon-button" aria-label="Choose starting layout" onClick={() => openModal('templates')}><ArrowUpRight size={17}/></button></div><div className="outline-heading"><h2>Page sections <span>{project.sections.length}</span></h2><span>DRAG TO REORDER</span></div><div className="section-outline" aria-label="Page section order">{project.sections.map((section, i) => <div key={section.id} draggable onDragStart={() => setDragged(section.id)} onDragEnd={() => setDragged(null)} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); dropSection(section.id); }} className={`outline-row ${selectedId === section.id ? 'selected' : ''} ${section.hidden ? 'is-hidden' : ''} ${dragged === section.id ? 'dragging' : ''}`}><button className="outline-select" onClick={() => selectSection(section.id, true)} aria-pressed={selectedId === section.id}><GripVertical size={12} className="drag-handle"/><span className="section-symbol">{SECTION_META[section.type].symbol}</span><span>{SECTION_META[section.type].name}</span><span className="outline-number">{String(i + 1).padStart(2, '0')}</span></button><button className="visibility-button" title={section.hidden ? 'Show section' : 'Hide section'} aria-label={`${section.hidden ? 'Show' : 'Hide'} ${SECTION_META[section.type].name} section ${i + 1}`} onClick={() => updateSection(section.id, { hidden: !section.hidden }, 'visibility')}>{section.hidden ? <EyeOff size={13}/> : <Eye size={13}/>}</button></div>)}</div><button className="add-section" onClick={() => openModal('add')} disabled={project.sections.length >= 30}><Plus size={15}/>Add a section</button>
         {selected && <section className="section-properties" ref={propertiesRef} key={selected.id}><div className="properties-heading"><div><p className="overline">EDIT SECTION</p><h2>{SECTION_META[selected.type].name}</h2></div><div className="section-actions"><button className="icon-button" title="Move section up" aria-label="Move section up" disabled={selectedIndex === 0} onClick={() => commit(p => moveSection(p, selected.id, -1))}><ArrowUp size={14}/></button><button className="icon-button" title="Move section down" aria-label="Move section down" disabled={selectedIndex === project.sections.length - 1} onClick={() => commit(p => moveSection(p, selected.id, 1))}><ArrowDown size={14}/></button><button className="icon-button" title="Duplicate section" aria-label="Duplicate section" disabled={project.sections.length >= 30} onClick={duplicateSection}><Copy size={14}/></button><button className="icon-button danger" title="Remove section" aria-label="Remove section" onClick={removeSection}><Trash2 size={14}/></button></div></div><div className="properties-shortcuts"><button onClick={() => focusSectionControl('.section-background-settings')}><ImagePlus size={13}/>Background</button><button onClick={() => focusSectionControl('.reveal-settings')}><MoreHorizontal size={13}/>Read more</button></div>{selected.hidden && <p className="inline-notice">This section is hidden from your page and export.</p>}<SectionLayoutSettings section={selected} device={device} onMobile={() => setDevice('mobile')} onChange={(change, key) => updateSection(selected.id, change, key)}/><Field label="Small label" value={selected.eyebrow} onChange={value => updateSection(selected.id, { eyebrow: value }, 'eyebrow')} maxLength={150}/><Field label="Headline" value={selected.title} onChange={value => updateSection(selected.id, { title: value }, 'title')} multiline hint="A clear promise goes a long way."/><Field label={selected.type === 'quote' ? 'Attribution' : 'Description'} value={selected.description} onChange={value => updateSection(selected.id, { description: value }, 'description')} multiline/>
         {['hero', 'pricing', 'cta'].includes(selected.type) && <div className="field-group"><p className="group-label">THE NEXT STEP</p><Field label="Button text" value={selected.buttonLabel} onChange={value => updateSection(selected.id, { buttonLabel: value }, 'buttonLabel')} placeholder="e.g. Book a free consultation" maxLength={100}/><Field label="Button destination" value={selected.buttonHref} onChange={value => updateSection(selected.id, { buttonHref: value }, 'buttonHref')} hint="Use https://, mailto:, tel:, or #contact." maxLength={2000}/>{selected.buttonHref && safeHref(selected.buttonHref) === '#' && <p className="field-warning">This destination isn’t a valid link yet.</p>}</div>}
-        {selected.type === 'hero' && <div className="field-group"><p className="group-label">A LITTLE VISUAL INTEREST</p><div className="image-control"><div className="image-mini">{selected.image ? <img src={safeImage(selected.image)} alt="Your uploaded hero"/> : <span>✳</span>}</div><div><strong>{selected.image ? 'Your own image' : 'Built-in illustration'}</strong><p>{selected.image ? 'Included in your export' : 'Or bring your own perspective.'}</p><button className="text-button" onClick={() => imageInput.current?.click()}><Upload size={12}/>{selected.image ? 'Replace image' : 'Upload an image'}</button></div></div>{selected.image && <button className="text-button" onClick={() => updateSection(selected.id, { image: '' }, 'image')}>Use illustration instead</button>}<small className="hint">PNG, JPG, or WebP · up to 1.5 MB</small>{selected.image && <ImageCrop key={selected.id + device} section={selected} device={device} onChange={(change, key) => updateSection(selected.id, change, key)}/>}<Field label="Image description" value={selected.items[0]?.text || ''} onChange={value => updateSection(selected.id, { items: [{ title: selected.items[0]?.title || '', text: value }] }, 'image-alt')} hint="Describe the image for people using screen readers."/><Field label="Note under the button" value={selected.items[0]?.title || ''} onChange={value => updateSection(selected.id, { items: [{ title: value, text: selected.items[0]?.text || '' }] }, 'note')}/></div>}
+        {selected.type === 'hero' && <div className="field-group"><p className="group-label">A LITTLE VISUAL INTEREST</p><div className="image-control"><div className="image-mini">{selected.image && isVideo(selected.image) ? <video muted playsInline src={mediaSource(selected.image)}/> : selected.image ? <img src={safeImage(selected.image)} alt="Your uploaded hero"/> : <span>✳</span>}</div><div><strong>{selected.image ? 'Your uploaded media' : 'Built-in illustration'}</strong><p>{selected.image ? 'Included in your export' : 'Or bring your own perspective.'}</p><button className="text-button" onClick={() => pickUpload(selected.id,'hero')}><Upload size={12}/>{selected.image ? 'Replace media' : 'Upload photo or video'}</button></div></div>{selected.image && <button className="text-button" onClick={() => updateSection(selected.id, { image: '' }, 'image')}>Use illustration instead</button>}<small className="hint">Images up to 1.5 MB · MP4 or WebM up to 12 MiB</small>{selected.image && !isVideo(selected.image) && <ImageCrop key={selected.id + device} section={selected} device={device} onChange={(change, key) => updateSection(selected.id, change, key)}/>}<Field label="Image description" value={selected.items[0]?.text || ''} onChange={value => updateSection(selected.id, { items: [{ title: selected.items[0]?.title || '', text: value }] }, 'image-alt')} hint="Describe the image for people using screen readers."/><Field label="Note under the button" value={selected.items[0]?.title || ''} onChange={value => updateSection(selected.id, { items: [{ title: value, text: selected.items[0]?.text || '' }] }, 'note')}/></div>}
         {['features', 'steps', 'pricing', 'faq'].includes(selected.type) && <div className="field-group"><div className="items-heading"><p className="group-label">{selected.type === 'faq' ? 'QUESTIONS & ANSWERS' : selected.type === 'pricing' ? 'YOUR OFFER & INCLUSIONS' : 'THE DETAILS'}</p><button className="text-button" disabled={selected.items.length >= 12} onClick={() => updateSection(selected.id, { items: [...selected.items, { title: 'Something worth sharing', text: 'Add a little detail here.' }] }, 'add-item')}><Plus size={12}/>Add</button></div>{selected.items.map((item, i) => <div className="item-editor" key={i}><div className="item-editor-heading"><span>{selected.type === 'faq' ? 'QUESTION' : selected.type === 'pricing' && i === 0 ? 'OFFER' : 'ITEM'} {i + 1}</span><button className="icon-button danger" aria-label={`Remove item ${i + 1}`} onClick={() => updateSection(selected.id, { items: selected.items.filter((_, n) => n !== i) }, 'remove-item')}><X size={12}/></button></div><Field label={selected.type === 'faq' ? 'Question' : selected.type === 'pricing' && i === 0 ? 'Offer name' : 'Title'} value={item.title} onChange={value => updateSection(selected.id, { items: selected.items.map((it, n) => n === i ? { ...it, title: value } : it) }, `item-${i}-title`)}/><Field label={selected.type === 'faq' ? 'Answer' : selected.type === 'pricing' && i === 0 ? 'Price' : 'Details'} value={item.text} onChange={value => updateSection(selected.id, { items: selected.items.map((it, n) => n === i ? { ...it, text: value } : it) }, `item-${i}-text`)} multiline/></div>)}</div>}
         {selected.type === 'tabs' && <TabsSettings section={selected} onChange={(change, key) => updateSection(selected.id, change, key)}/>}
                 {selected.type === 'gallery' && <GallerySettings section={selected} onChange={(change, key) => updateSection(selected.id, change, key)} onUpload={uploadGallery}/>}
                 {selected.type === 'contact' && <ContactSettings section={selected} onChange={(change, key) => updateSection(selected.id, change, key)}/>}
+                <div className="field-group"><p className="group-label">SECTION MEDIA</p><button className="button secondary full-width" disabled={selected.hidden} onClick={()=>pickUpload(selected.id,'front')}><ImagePlus size={14}/>Place a photo or video</button>
+                {(Object.keys(roles) as PhotoRole[]).map(role=>{const item=currentPhoto(selected,role);return item && mediaSource(item.src) && <div className="media-actions" key={role}><button className="text-button" disabled={selected.hidden} onClick={()=>stage({...item,id:selected.id,role,origin:{id:selected.id,role}})}>Move {roles[role].toLowerCase()}</button><button className="text-button" aria-label={'Remove '+roles[role]} onClick={()=>commit(p=>({...p,sections:p.sections.map(s=>s.id===selected.id?clearPhoto(s,role):s)}))}>Remove</button></div>;})}
+                <small className="hint">Images up to 1.5 MB · MP4 or WebM up to 12 MiB</small></div>
                 <BackgroundSettings section={selected} onChange={(change, key) => updateSection(selected.id, change, key)} onUpload={file => uploadImage(file, 'background')}/>
                 <RevealSettings section={selected} onChange={(change, key) => updateSection(selected.id, change, key)}/>
                 </section>}{!selected && <div className="panel-empty"><MousePointer2 size={24}/><p>Select a section or add your first one.</p></div>}</>}
@@ -307,14 +335,15 @@ export default function Studio() {
       </div><div className="panel-footer"><span className="footer-spark">✳</span>A little page. A big beginning.</div></aside>}
       <main className={`canvas-area ${device === 'mobile' ? 'mobile-view' : ''}`}><div className="canvas-toolbar"><div className="canvas-label">{!panelOpen && <button className="icon-button" aria-label="Show editing panel" onClick={() => setPanelOpen(true)}><PanelLeftOpen size={17}/></button>}<span className="canvas-dot"/><span>YOUR PAGE</span><span className="canvas-label-divider">/</span><span className="canvas-template">{GOALS.find(g => g.id === project.goal)?.name || TEMPLATES.find(t => t.id === project.template)?.tag}</span></div><div className="segmented device-switch" aria-label="Preview size"><button className={device === 'desktop' ? 'active' : ''} onClick={() => setDevice('desktop')} aria-pressed={device === 'desktop'} title="Desktop preview"><Monitor size={14}/><span>Desktop</span></button><button className={device === 'mobile' ? 'active' : ''} onClick={() => setDevice('mobile')} aria-pressed={device === 'mobile'} title="Mobile preview"><Smartphone size={14}/><span>Mobile</span></button></div><button className="text-button canvas-preview-link" onClick={() => openModal('preview')}>Open preview<ArrowUpRight size={13}/></button></div><div className="canvas-scroll"><div className="canvas-hint"><MousePointer2 size={12}/><span>Click text to edit. Click an image to replace it.</span><span className="hint-separator">·</span><span>Changes save when you leave the text</span></div><div className={`browser-frame ${device}`}><div className="browser-chrome"><div className="browser-dots"><i /><i /><i /></div><span className="browser-address"><span className="address-lock">◇</span>{slug(project.brand || 'your-page')}.page <span> / preview</span></span><button className="icon-button" aria-label="Open full page preview" title="Open preview" onClick={() => openModal('preview')}><ExternalLink size={12}/></button></div><div className="iframe-viewport" ref={viewportRef}><iframe ref={iframe} title="Live landing page editor preview" sandbox="allow-scripts" style={{ width: 100 / previewScale + '%', height: 100 / previewScale + '%', transform: 'scale(' + previewScale + ')' }} srcDoc={editorDocument}/></div></div><div className="canvas-bottom"><span><span className="canvas-dot"/>{visibleCount} sections · One continuous page</span><span>Responsive by nature<Check size={11}/></span></div></div><div className="sample-note"><Sparkles size={12}/><span>Good bones, your story. Template copy is a starting point—make it yours.</span></div></main>
     </div>
-    <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={e => importProject(e.target.files?.[0])}/><input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => uploadImage(e.target.files?.[0])}/>
+    <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={e => importProject(e.target.files?.[0])}/><input ref={imageInput} type="file" accept={mediaAccept} hidden onChange={e => {const t=uploadTarget.current;void uploadImage(e.target.files?.[0],t?.role,t?.id);}}/>
     {toast && <div className="toast" role="status"><CheckCircle2 size={16}/><span>{toast}</span><button aria-label="Dismiss message" onClick={() => setToast('')}><X size={14}/></button></div>}
-    <dialog ref={modalRef} className={`modal ${modal === 'preview' ? 'preview-modal' : ''} ${modal === 'templates' ? 'templates-modal' : ''}`} onCancel={() => setModal(null)} onClick={e => {
+    <dialog ref={modalRef} className={`modal ${modal === 'placement' ? 'placement-modal' : modal === 'preview' ? 'preview-modal' : ''} ${modal === 'templates' ? 'templates-modal' : ''}`} onCancel={() => setModal(null)} onClick={e => {
             if (e.target === e.currentTarget)
                 setModal(null);
         }} aria-labelledby="modal-title">
-      <div className="modal-header"><div><p className="overline">{modal === 'templates' ? 'NO BLANK CANVAS REQUIRED' : modal === 'add' ? 'BUILD A CLEARER STORY' : modal === 'export' ? 'READY FOR THE WORLD' : modal === 'preview' ? 'LOOKING GOOD' : 'WELCOME TO YOUR STUDIO'}</p><h2 id="modal-title">{modal === 'templates' ? 'What should your page do?' : modal === 'add' ? 'What comes next?' : modal === 'export' ? 'Your page. Yours to take.' : modal === 'preview' ? project.name : 'Small learning curve. Big possibilities.'}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={() => setModal(null)}><X size={19}/></button></div>
-      {modal === 'templates' && <><p className="modal-intro">Pick a goal. Add your name and offer. We’ll put the right sections in order.</p><GoalSetup onCreate={startGoal}/><details className="visual-starters"><summary>Or choose a visual starting layout</summary><div className="template-grid">{TEMPLATES.map(template => <button className={`template-card ${project.template === template.id ? 'current' : ''}`} key={template.id} onClick={() => chooseTemplate(template.id)}><TemplateThumb tone={template.color}/><div className="template-info"><span>{template.tag}</span><h3>{template.name}</h3><p>{template.description}</p><strong>Start with this<ArrowUpRight size={14}/></strong></div></button>)}</div></details><p className="modal-footnote"><Undo2 size={13}/>Starting a new page replaces this draft. Your previous page is one undo away.</p></>}
+      <div className="modal-header"><div><p className="overline">{modal === 'placement' ? 'SECTION MEDIA' : modal === 'templates' ? 'NO BLANK CANVAS REQUIRED' : modal === 'add' ? 'BUILD A CLEARER STORY' : modal === 'export' ? 'READY FOR THE WORLD' : modal === 'preview' ? 'LOOKING GOOD' : 'WELCOME TO YOUR STUDIO'}</p><h2 id="modal-title">{modal === 'placement' ? 'Place your media' : modal === 'templates' ? 'What should your page do?' : modal === 'add' ? 'What comes next?' : modal === 'export' ? 'Your page. Yours to take.' : modal === 'preview' ? project.name : 'Small learning curve. Big possibilities.'}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={() => setModal(null)}><X size={19}/></button></div>
+      {modal === 'placement' && placement && <MediaPlacement project={project} initial={placement} apply={d=>{commit(p=>placePhoto(p,d));setSelectedId(d.id);setPlacement(null);setModal(null);notify('Media placed.');}} cancel={()=>{setPlacement(null);setModal(null);}}/>}
+      {modal === 'templates' && <><p className="modal-intro">Pick a goal. Add your name and offer. We’ll put the right sections in order.</p><GoalSetup onCreate={startGoal}/><details open className="visual-starters"><summary>Choose a ready-made template</summary><Field label="Booking, signup, or checkout link (optional)" value={starterLink} onChange={setStarterLink} placeholder="https://…" maxLength={2000}/><div className="template-grid">{TEMPLATES.map(template => <button className={`template-card ${project.template === template.id ? 'current' : ''}`} key={template.id} onClick={() => chooseTemplate(template.id)}><TemplateThumb tone={template.color}/><div className="template-info"><span>{template.tag}</span><h3>{template.name}</h3><p>{template.description}</p><strong>Start with this<ArrowUpRight size={14}/></strong></div></button>)}</div></details><p className="modal-footnote"><Undo2 size={13}/>Starting a new page replaces this draft. Your previous page is one undo away.</p></>}
       {modal === 'add' && <><p className="modal-intro">Each section has a job. Add what your story needs.</p><div className="block-grid">{(Object.entries(SECTION_META) as [
                 SectionType,
                 typeof SECTION_META[SectionType]
